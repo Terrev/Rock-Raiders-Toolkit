@@ -15,7 +15,7 @@
 		[Toggle] _X("X", Float) = 0
 		[Toggle] _Y("Y", Float) = 0
 		[Toggle] _Z("Z", Float) = 1
-		[Toggle] _PixelBlending("Pixel Blending", Float) = 0
+		[Toggle] _PixelBlending("Pixel Blending", Float) = 1
 		
 		_TextureCenterX("Texture Center X", Float) = 0
 		_TextureCenterY("Texture Center Y", Float) = 0
