@@ -24,12 +24,18 @@ public class RockRaidersTools : MonoBehaviour
 		Undo.RegisterCreatedObjectUndo(obj, "Created Measuring Tape");
 	}
 	
-	public struct Polygon
+	// Unity's own mesh combining functionality is apparently broken/unreliable so we'll do it ourselves
+	public class CustomMesh
 	{
-		public UInt16[] indices;
-		public Vector2[] uv;
-		public int[] uvIndices;
-		public Int16 surface;
+		public List<Vector3> vertices = new List<Vector3>();
+		public List<Vector2> uv = new List<Vector2>();
+		public List<SubMesh> subMeshes = new List<SubMesh>();
+	}
+	
+	public class SubMesh
+	{
+		public int[] triangles;
+		public Material material;
 	}
 	
 	[MenuItem("Rock Raiders/Save LWO")]
@@ -46,52 +52,93 @@ public class RockRaidersTools : MonoBehaviour
 	
 	static void SaveLWO(bool exportUV)
 	{
-		// Get stuff from selected model
+		// Error check
 		if (Selection.activeTransform == null)
 		{
 			Debug.LogWarning("Please select the model you want to export");
 			return;
 		}
 		
-		GameObject modelObject = Selection.activeTransform.gameObject;
-		string modelName = modelObject.name;
+		// Get stuff
+		GameObject parent = Selection.activeTransform.gameObject;
+		string modelName = parent.name;
+		MeshRenderer[] meshRenderers = parent.GetComponentsInChildren<MeshRenderer>();
 		
-		MeshRenderer meshRenderer = modelObject.GetComponent<MeshRenderer>();
-		if (meshRenderer == null)
-		{
-			Debug.LogWarning("Selected GameObject doesn't have a MeshRenderer component");
-			return;
-		}
-		
-		MeshFilter meshFilter = modelObject.GetComponent<MeshFilter>();
-		if (meshFilter == null)
-		{
-			Debug.LogWarning("Selected GameObject doesn't have a MeshFilter component");
-			return;
-		}
-		
-		Mesh mesh = meshFilter.sharedMesh;
-		
-		if (exportUV && mesh.uv.Length == 0)
-		{
-			Debug.LogWarning("Selected mesh doesn't have UVs");
-			return;
-		}
-		
+		// Loop through stuff
 		List<Material> surfaces = new List<Material>();
 		List<string> surfaceNames = new List<string>();
-		foreach (Material material in meshRenderer.sharedMaterials)
+		CustomMesh mesh = new CustomMesh();
+		int vertBoost = 0;
+		for (int i = 0; i < meshRenderers.Length; i++)
 		{
-			if (material.shader.name != "Rock Raiders" && material.shader.name != "Rock Raiders Transparent")
+			// Get MeshFilter
+			MeshFilter meshFilter = meshRenderers[i].gameObject.GetComponent<MeshFilter>();
+			if (meshFilter.sharedMesh.subMeshCount != meshRenderers[i].sharedMaterials.Length)
 			{
-				Debug.LogWarning(material.name + " doesn't use a Rock Raiders shader");
+				Debug.LogError("SubMesh count and material count don't match on " + meshRenderers[i].gameObject.name);
 				return;
 			}
-			if (!surfaceNames.Contains(material.name))
+			
+			// Fill out surface lists
+			foreach (Material material in meshRenderers[i].sharedMaterials)
 			{
-				surfaces.Add(material);
-				surfaceNames.Add(material.name);
+				// Moar error check
+				if (material == null)
+				{
+					Debug.LogError("Material slot is null on " + meshRenderers[i].gameObject.name);
+					return;
+				}
+				if (material.shader.name != "Rock Raiders" && material.shader.name != "Rock Raiders Transparent")
+				{
+					Debug.LogError(material.name + " doesn't use a Rock Raiders shader");
+					return;
+				}
+				
+				// Surface stuff
+				if (!surfaceNames.Contains(material.name))
+				{
+					surfaces.Add(material);
+					surfaceNames.Add(material.name);
+				}
 			}
+			
+			// Fill out our CustomMesh
+			// verts
+			foreach (Vector3 vertex in meshFilter.sharedMesh.vertices)
+			{
+				mesh.vertices.Add(meshFilter.gameObject.transform.TransformPoint(vertex));
+			}
+			// UV
+			if (meshFilter.sharedMesh.uv.Length == 0)
+			{
+				// default UVs
+				for (int j = 0; j < meshFilter.sharedMesh.vertices.Length; j++)
+				{
+					// these will be 0, 0 in the final UV file once flipped
+					mesh.uv.Add(new Vector2(0.0f, 1.0f));
+				}
+			}
+			else
+			{
+				// use UVs if present
+				foreach (Vector2 uv in meshFilter.sharedMesh.uv)
+				{
+					mesh.uv.Add(uv);
+				}
+			}
+			// tris/submeshes
+			for (int j = 0; j < meshFilter.sharedMesh.subMeshCount; j++)
+			{
+				SubMesh subMesh = new SubMesh();
+				subMesh.triangles = meshFilter.sharedMesh.GetTriangles(j);
+				for (int k = 0; k < subMesh.triangles.Length; k++)
+				{
+					subMesh.triangles[k] += vertBoost;
+				}
+				subMesh.material = meshRenderers[i].sharedMaterials[j];
+				mesh.subMeshes.Add(subMesh);
+			}
+			vertBoost += meshFilter.sharedMesh.vertices.Length;
 		}
 		
 		string path = EditorUtility.SaveFilePanel("Save LWO", "", modelName + ".lwo", "lwo");
@@ -141,10 +188,10 @@ public class RockRaidersTools : MonoBehaviour
 		// Temp length
 		binaryWriter.Write("temp".ToCharArray());
 		rememberMe = fileStream.Position;
-		for (int i = 0; i < mesh.subMeshCount; i++)
+		for (int i = 0; i < mesh.subMeshes.Count; i++)
 		{
-			int surfaceIndex = surfaceNames.IndexOf(meshRenderer.sharedMaterials[i].name) + 1;
-			int[] tris = mesh.GetTriangles(i);
+			int surfaceIndex = surfaceNames.IndexOf(mesh.subMeshes[i].material.name) + 1;
+			int[] tris = mesh.subMeshes[i].triangles;
 			for (int j = 0; j < tris.Length; j += 3)
 			{
 				binaryWriter.Write((UInt16)3); // How many verts
@@ -355,15 +402,23 @@ public class RockRaidersTools : MonoBehaviour
 			}
 			uvString.Append(texturePath).Append("\n");
 		}
-		uvString.Append(mesh.triangles.Length / 3).Append("\n");
-		int whatever = 0;
-		for (int i = 0; i < mesh.triangles.Length; i += 3)
+		int totalIndexCount = 0;
+		foreach (SubMesh subMesh in mesh.subMeshes)
 		{
-			uvString.Append(whatever).Append(" 3\n");
-			uvString.Append(mesh.uv[mesh.triangles[i]].x).Append(" ").Append(-mesh.uv[mesh.triangles[i]].y + 1.0f).Append(" 0\n");
-			uvString.Append(mesh.uv[mesh.triangles[i + 1]].x).Append(" ").Append(-mesh.uv[mesh.triangles[i + 1]].y + 1.0f).Append(" 0\n");
-			uvString.Append(mesh.uv[mesh.triangles[i + 2]].x).Append(" ").Append(-mesh.uv[mesh.triangles[i + 2]].y + 1.0f).Append(" 0\n");
-			whatever++;
+			totalIndexCount += subMesh.triangles.Length;
+		}
+		uvString.Append(totalIndexCount / 3).Append("\n");
+		int whatever = 0;
+		foreach (SubMesh subMesh in mesh.subMeshes)
+		{
+			for (int i = 0; i < subMesh.triangles.Length; i += 3)
+			{
+				uvString.Append(whatever).Append(" 3\n");
+				uvString.Append(mesh.uv[subMesh.triangles[i]].x).Append(" ").Append(-mesh.uv[subMesh.triangles[i]].y + 1.0f).Append(" 0\n");
+				uvString.Append(mesh.uv[subMesh.triangles[i + 1]].x).Append(" ").Append(-mesh.uv[subMesh.triangles[i + 1]].y + 1.0f).Append(" 0\n");
+				uvString.Append(mesh.uv[subMesh.triangles[i + 2]].x).Append(" ").Append(-mesh.uv[subMesh.triangles[i + 2]].y + 1.0f).Append(" 0\n");
+				whatever++;
+			}
 		}
 		// dummy data
 		for (int i = 0; i < surfaces.Count; i ++)
