@@ -131,6 +131,17 @@ public class RockRaidersTools : MonoBehaviour
 			{
 				SubMesh subMesh = new SubMesh();
 				subMesh.triangles = meshFilter.sharedMesh.GetTriangles(j);
+				// reverse winding order for negative scale
+				if (meshFilter.gameObject.transform.localToWorldMatrix.determinant < 0.0f)
+				{
+					for (int k = 0; k < subMesh.triangles.Length; k += 3)
+					{
+						int temp = subMesh.triangles[k];
+						subMesh.triangles[k] = subMesh.triangles[k + 2];
+						subMesh.triangles[k + 2] = temp;
+					}
+				}
+				// vert boost
 				for (int k = 0; k < subMesh.triangles.Length; k++)
 				{
 					subMesh.triangles[k] += vertBoost;
