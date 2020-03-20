@@ -28,6 +28,7 @@ public class RockRaidersTools : MonoBehaviour
 	public class CustomMesh
 	{
 		public List<Vector3> vertices = new List<Vector3>();
+		public List<Vector3> normals = new List<Vector3>();
 		public List<Vector2> uv = new List<Vector2>();
 		public List<SubMesh> subMeshes = new List<SubMesh>();
 	}
@@ -36,6 +37,13 @@ public class RockRaidersTools : MonoBehaviour
 	{
 		public int[] triangles;
 		public Material material;
+	}
+	
+	// bear with me ok
+	public struct Vertex
+	{
+		public Vector3 position;
+		public Vector3 normal;
 	}
 	
 	[MenuItem("Rock Raiders/Save LWO")]
@@ -108,6 +116,23 @@ public class RockRaidersTools : MonoBehaviour
 			{
 				mesh.vertices.Add(meshFilter.gameObject.transform.TransformPoint(vertex));
 			}
+			// normals - these won't be exported, but used later for determining which verts to merge in the LWO, so the smoothing the game calculates is correct
+			if (meshFilter.sharedMesh.normals.Length == 0)
+			{
+				// default normals - zero is fine for this, the actual value doesn't really matter, we're only gonna be checking if verts have equal normals to each other
+				for (int j = 0; j < meshFilter.sharedMesh.vertices.Length; j++)
+				{
+					mesh.normals.Add(Vector3.zero);
+				}
+			}
+			else
+			{
+				// use normals if present
+				foreach (Vector3 normal in meshFilter.sharedMesh.normals)
+				{
+					mesh.normals.Add(normal);
+				}
+			}
 			// UV
 			if (meshFilter.sharedMesh.uv.Length == 0)
 			{
@@ -152,12 +177,42 @@ public class RockRaidersTools : MonoBehaviour
 			vertBoost += meshFilter.sharedMesh.vertices.Length;
 		}
 		
+		// make condensed list of verts with only those that have different positions and normals (no UV splits etc) - so only intentionally unwelded verts will be unwelded in the LWO
+		List<Vertex> uniqueVerts = new List<Vertex>();
+		int[] redirectArray = new int[mesh.vertices.Count];
+		for (int i = 0; i < mesh.vertices.Count; i++)
+		{
+			Vertex vertex;
+			vertex.position = mesh.vertices[i];
+			vertex.normal = mesh.normals[i];
+			
+			if (!uniqueVerts.Contains(vertex))
+			{
+				uniqueVerts.Add(vertex);
+			}
+			
+			int newVertexIndex;
+			int findResults = uniqueVerts.IndexOf(vertex);
+			if (findResults == -1)
+			{
+				uniqueVerts.Add(vertex);
+				newVertexIndex = uniqueVerts.Count - 1;
+			}
+			else
+			{
+				newVertexIndex = findResults;
+			}
+			redirectArray[i] = newVertexIndex;
+		}
+		
+		// Get path
 		string path = EditorUtility.SaveFilePanel("Save LWO", "", modelName + ".lwo", "lwo");
 		if (string.IsNullOrEmpty(path))
 		{
 			return;
 		}
 		
+		// Start writing stuff
 		FileStream fileStream = new FileStream(path, FileMode.Create);
 		BinaryWriter binaryWriter = new BinaryWriter2(fileStream);
 		long rememberMe;
@@ -169,11 +224,11 @@ public class RockRaidersTools : MonoBehaviour
 		// Temp length
 		binaryWriter.Write("temp".ToCharArray());
 		rememberMe = fileStream.Position;
-		foreach (Vector3 vertex in mesh.vertices)
+		foreach (Vertex vertex in uniqueVerts)
 		{
-			binaryWriter.Write(-vertex.x);
-			binaryWriter.Write(vertex.y);
-			binaryWriter.Write(-vertex.z);
+			binaryWriter.Write(-vertex.position.x);
+			binaryWriter.Write(vertex.position.y);
+			binaryWriter.Write(-vertex.position.z);
 		}
 		FinishWritingChunk(fileStream, binaryWriter, rememberMe);
 		
@@ -206,9 +261,9 @@ public class RockRaidersTools : MonoBehaviour
 			for (int j = 0; j < tris.Length; j += 3)
 			{
 				binaryWriter.Write((UInt16)3); // How many verts
-				binaryWriter.Write((UInt16)tris[j]);
-				binaryWriter.Write((UInt16)tris[j + 1]);
-				binaryWriter.Write((UInt16)tris[j + 2]);
+				binaryWriter.Write((UInt16)redirectArray[tris[j]]);
+				binaryWriter.Write((UInt16)redirectArray[tris[j + 1]]);
+				binaryWriter.Write((UInt16)redirectArray[tris[j + 2]]);
 				binaryWriter.Write((UInt16)surfaceIndex);
 			}
 		}
