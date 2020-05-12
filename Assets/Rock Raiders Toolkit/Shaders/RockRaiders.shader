@@ -8,7 +8,7 @@
 		_Transparency ("Transparency (solid colors only)", Range(0, 1)) = 0
 		_Luminosity ("Luminosity (glow in the dark)", Range(0, 1)) = 0
 		
-		_MainTex ("Texture (Tiling and Offset aren't used here)", 2D) = "white" {}
+		[NoScaleOffset] _MainTex ("Texture", 2D) = "white" {}
 		[Toggle] _Sequence("Texture is sequence", Float) = 0
 		[Toggle] _SharedTexture("Write relative texture paths", Float) = 0
 		// Texture flags
