@@ -31,7 +31,7 @@
 
 		CGPROGRAM
 
-		#pragma surface surf Standard fullforwardshadows alpha
+		#pragma surface surf Standard fullforwardshadows alpha:fade
 
 		sampler2D _MainTex;
 		fixed4 _Color;
